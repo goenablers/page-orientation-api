@@ -1,0 +1,33 @@
+# Sync: release branch -> Fly STG (stg-goenablers), master -> Fly PRD (prd-goenablers)
+# Configure repo secrets: FLY_API_TOKEN_STG, FLY_API_TOKEN_PRD
+name: Deploy
+on:
+  push:
+    branches: [release, master]
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-stg:
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy to Fly (staging)
+        run: flyctl deploy --remote-only -c fly.staging.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_STG }}
+
+  deploy-prd:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy to Fly (production)
+        run: flyctl deploy --remote-only -c fly.production.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_PRD }}

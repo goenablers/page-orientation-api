@@ -1,0 +1,9 @@
+# All below are free/open-source (MIT, BSD, Apache-2.0) — no paid runtime licenses.
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
+pytesseract
+opencv-python
+numpy
+pytest
