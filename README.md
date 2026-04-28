@@ -47,11 +47,15 @@ GitHub Actions: [.github/workflows/deploy.yml](.github/workflows/deploy.yml) —
 
 ```bash
 fly apps create page-orientation-api-stg --org stg-goenablers
-fly apps create page-orientation-api-prd --org prd-goenablers
+fly apps create page-orientation-api-prd --org prd-goenablers   # requires prd org to exist
 fly tokens create deploy -a page-orientation-api-stg
 fly tokens create deploy -a page-orientation-api-prd
 # Add the tokens to GitHub repo secrets (see table above)
 ```
+
+**Staging** is available at: `https://page-orientation-api-stg.fly.dev` after deploy.
+
+Pushing the repo to **GitHub** and configuring secrets is described in [docs/SETUP_GITHUB_AND_PROD.md](docs/SETUP_GITHUB_AND_PROD.md) (if `gh` is not installed on your machine, use a manual `git remote` as documented there).
 
 ## Docker
 
