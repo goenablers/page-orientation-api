@@ -23,7 +23,7 @@ primary_region = "gru"
     path = "/healthz"
 
 [[vm]]
-  memory = "2gb"
+  memory = "4gb"
   cpus = 2
-  memory_mb = 2048
+  memory_mb = 4096
   cpu_kind = "performance"
