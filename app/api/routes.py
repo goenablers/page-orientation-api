@@ -23,7 +23,14 @@ async def detect(
     if file is not None:
         image_bytes = await file.read()
     else:
-        image_bytes = await request.body()
+        # If the client sent multipart but omitted the 'file' field,
+        # FastAPI has already consumed the request stream while parsing form data.
+        # In that scenario, reading request.body() raises "Stream consumed".
+        content_type = (request.headers.get("content-type") or "").lower()
+        if content_type.startswith("multipart/"):
+            image_bytes = b""
+        else:
+            image_bytes = await request.body()
     if not image_bytes:
         raise HTTPException(
             status_code=400,

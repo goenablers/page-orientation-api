@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import concurrent.futures
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -48,6 +49,8 @@ class OrientationResult:
 
 
 _LOW_CONFIDENCE_RETRY_THRESHOLD = 5.0
+_OCR_MAX_WORDS = 2500
+_OCR_TIMEOUT_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,14 @@ def _binarize(image: np.ndarray) -> np.ndarray:
 def _upsample(image: np.ndarray, *, scale: float = 2.0) -> np.ndarray:
     h, w = image.shape[:2]
     return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
+def _downsample_max_side(image: np.ndarray, *, max_side: int) -> np.ndarray:
+    h, w = image.shape[:2]
+    side = max(h, w)
+    if side <= max_side:
+        return image
+    scale = max_side / float(side)
+    return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
 
 def _rotate_90(image: np.ndarray, k: int) -> np.ndarray:
@@ -170,7 +181,7 @@ def _best_attempt(attempts: list[_OsdAttempt]) -> _OsdAttempt:
     return max(attempts, key=key)
 
 
-def _ocr_rotation_score(image: np.ndarray) -> Optional[tuple[int, float, float, int]]:
+def _ocr_rotation_score(image: np.ndarray, *, psm: int) -> Optional[tuple[int, float, float, int]]:
     """
     Fallback when OSD confidence is persistently low:
     score rotations by running light OCR and picking the rotation that yields
@@ -181,7 +192,7 @@ def _ocr_rotation_score(image: np.ndarray) -> Optional[tuple[int, float, float, 
     best: Optional[tuple[int, float, float, int]] = None
     for deg in (0, 90, 180, 270):
         rotated = _rotate_90(image, (deg // 90) % 4)
-        data = pytesseract.image_to_data(rotated, config="--psm 6", output_type=Output.DICT)
+        data = pytesseract.image_to_data(rotated, config=f"--psm {psm}", output_type=Output.DICT)
         confs: list[float] = []
         texts = data.get("text") or []
         raw_confs = data.get("conf") or []
@@ -196,6 +207,8 @@ def _ocr_rotation_score(image: np.ndarray) -> Optional[tuple[int, float, float, 
             if cf < 0:
                 continue
             confs.append(cf)
+            if len(confs) >= _OCR_MAX_WORDS:
+                break
 
         if not confs:
             continue
@@ -265,19 +278,49 @@ def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> Or
         best_so_far = _best_attempt(attempts)
         if (best_so_far.confidence or 0.0) < _LOW_CONFIDENCE_RETRY_THRESHOLD:
             try:
+                # OCR sweep is expensive; run it with a hard timeout so it can't hang STG/PRD.
+                # OCR sweep can be expensive; we allow it for quality, but still keep
+                # a hard timeout so requests can't hang forever.
                 cleaned = _upsample(_binarize(image), scale=2.0)
-                scored = _ocr_rotation_score(cleaned)
+
+                # For multi-page scans, OCR over a half can be both cheaper and more reliable.
+                candidates: list[tuple[str, np.ndarray]] = [("full", cleaned)]
+                try:
+                    for nm, part in _split_halves(cleaned):
+                        candidates.append((nm, part))
+                except Exception:
+                    pass
+
+                def _do_ocr() -> Optional[tuple[str, int, float, float, int, int]]:
+                    best_scored: Optional[tuple[str, int, float, float, int, int]] = None
+                    for nm, img in candidates:
+                        for psm in (6, 11):
+                            s = _ocr_rotation_score(img, psm=psm)
+                            if s is None:
+                                continue
+                            deg, score, avg100, n = s
+                            cand = (nm, deg, score, avg100, n, psm)
+                            if best_scored is None or cand[2] > best_scored[2]:
+                                best_scored = cand
+                    return best_scored
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_do_ocr)
+                    scored = fut.result(timeout=_OCR_TIMEOUT_S)
+
                 if scored is not None:
-                    deg, score, avg100, n = scored
+                    nm, deg, score, avg100, n, psm = scored
                     attempts.append(
                         _OsdAttempt(
-                            name=f"ocr_sweep(avg={avg100:.1f},n={n})",
+                            name=f"ocr_sweep[{nm}](psm={psm},avg={avg100:.1f},n={n})",
                             rotate_degrees=deg,
                             # Normalize 0..100 OCR confidence to roughly 0..10 scale.
                             confidence=avg100 / 10.0,
                             raw_osd=f"OCR score={score:.2f} avg_conf={avg100:.1f} n_words={n}",
                         )
                     )
+            except concurrent.futures.TimeoutError:
+                pass
             except Exception:
                 pass
 
