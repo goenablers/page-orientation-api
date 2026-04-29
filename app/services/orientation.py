@@ -283,13 +283,15 @@ def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> Or
                 # a hard timeout so requests can't hang forever.
                 cleaned = _upsample(_binarize(image), scale=2.0)
 
-                # For multi-page scans, OCR over a half can be both cheaper and more reliable.
-                candidates: list[tuple[str, np.ndarray]] = [("full", cleaned)]
+                # For multi-page scans, OCR over a half is often more reliable than scoring
+                # the combined image (which can contain conflicting layouts).
+                candidates: list[tuple[str, np.ndarray]] = []
                 try:
-                    for nm, part in _split_halves(cleaned):
-                        candidates.append((nm, part))
+                    candidates.extend(_split_halves(cleaned))
                 except Exception:
-                    pass
+                    candidates = []
+                if not candidates:
+                    candidates = [("full", cleaned)]
 
                 def _do_ocr() -> Optional[tuple[str, int, float, float, int, int]]:
                     best_scored: Optional[tuple[str, int, float, float, int, int]] = None
