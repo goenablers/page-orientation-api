@@ -1,7 +1,9 @@
 # page-orientation-api
 
-REST API (FastAPI) to detect **PNG page orientation** with **Tesseract OSD** (`--psm 0`).  
-Returns one of: `upright`, `rotated_left`, `rotated_right`, `upside_down`. No image is rotated in the response.
+REST API (FastAPI) to classify **PNG pages** as `blank` or `content`, and detect
+page orientation with **Tesseract OSD** (`--psm 0`) only for content pages.
+Returns one of: `upright`, `rotated_left`, `rotated_right`, `upside_down` when
+orientation runs. No image is rotated in the response.
 
 ## Stack (all free / open-source)
 
@@ -21,8 +23,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 ```
 
 - `GET /healthz` — health
-- `POST /detect` — `multipart/form-data` field `file` (PNG), or raw bytes body  
-- Optional: `?debug=1` adds `rotate_degrees` and `raw_osd` to the JSON
+- `POST /detect` — `multipart/form-data` field `file` (PNG), or raw bytes body
+- Response includes `blank` (`true` or `false`), `blankness_score`, and
+  `orientation_confidence` when orientation runs
+- Optional: `?debug=1` adds `blankness_debug`, plus `rotate_degrees` and `raw_osd`
+  when orientation runs
 
 ## Tests
 
@@ -68,5 +73,6 @@ docker run -e PORT=8080 -p 8080:8080 page-orientation-api
 
 - `app/main.py` — FastAPI app
 - `app/api/routes.py` — HTTP routes
+- `app/services/blankness.py` — blank vs content page classification
 - `app/services/orientation.py` — Tesseract OSD / rotation label logic
 - `app/core/config.py` — settings (`APP_ENV`, `PORT`)

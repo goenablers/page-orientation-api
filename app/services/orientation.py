@@ -57,7 +57,18 @@ def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> Or
     if image is None:
         raise ValueError("Failed to decode image")
 
-    raw = pytesseract.image_to_osd(image, config="--psm 0")
+    try:
+        raw = pytesseract.image_to_osd(image, config="--psm 0")
+    except pytesseract.pytesseract.TesseractError as exc:
+        if "Too few characters" in str(exc):
+            return OrientationResult(
+                orientation="upright",
+                confidence=None,
+                rotate_degrees=0,
+                raw_osd=str(exc) if include_debug else None,
+            )
+        raise
+
     parsed = _parse_osd(raw)
 
     rotate_raw = parsed.get("Rotate", 0)
