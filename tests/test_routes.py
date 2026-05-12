@@ -72,6 +72,7 @@ def test_detect_skips_orientation_for_blank(monkeypatch) -> None:
             "blankness_score": 0.91,
             "orientation": None,
             "orientation_confidence": None,
+            "orientation_method": None,
         }
 
 
@@ -83,6 +84,7 @@ def test_detect_runs_orientation_for_content(monkeypatch) -> None:
         lambda _image_bytes, *, include_debug: OrientationResult(
             orientation="upright",
             confidence=12.5,
+            method="osd",
             rotate_degrees=0,
             raw_osd="Rotate: 0" if include_debug else None,
         ),
@@ -95,6 +97,7 @@ def test_detect_runs_orientation_for_content(monkeypatch) -> None:
         "blankness_score": 0.91,
         "orientation": "upright",
         "orientation_confidence": 12.5,
+        "orientation_method": "osd",
         "blankness_debug": {
             "background_level": 252.0,
             "strong_threshold": 220,

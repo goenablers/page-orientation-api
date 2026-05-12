@@ -61,6 +61,9 @@ async def detect(
         "orientation_confidence": (
             orientation_result.confidence if orientation_result is not None else None
         ),
+        "orientation_method": (
+            orientation_result.method if orientation_result is not None else None
+        ),
     }
     if debug:
         out["blankness_debug"] = blankness_result.debug_payload()
