@@ -82,18 +82,31 @@ def _connected_component_stats(mask: np.ndarray) -> tuple[int, int, float]:
 
 
 _OCR_MIN_CONF = 50
-_OCR_MAX_TOKENS = 20  # more matching tokens than this implies scattered noise
-_OCR_MAX_SPREAD = 0.25  # max fraction of image area the token bounding box may cover
+# Small-label path: a compact cluster of up to this many tokens is accepted
+# as a label/page-number annotation.
+_OCR_MAX_TOKENS_LABEL = 20
+_OCR_MAX_SPREAD_LABEL = 0.25  # max bounding-box fraction for a label
+# Full-page path: a real document page will have many confident tokens that
+# together cover a meaningful fraction of the page.
+_OCR_MIN_TOKENS_PAGE = 30
+_OCR_MIN_SPREAD_PAGE = 0.10  # token bounding box must span at least 10 % of page
+_OCR_MIN_AVG_CONF_PAGE = 70  # require genuinely confident text, not OCR noise
 
 
 def _has_readable_text(image: np.ndarray) -> bool:
     """
-    Return True when OCR finds a spatially compact cluster of readable tokens.
+    Return True when OCR finds readable alphanumeric content.
 
-    Two filters exclude noise from scattered marks:
-    - Token count cap: pages with many matching tokens are likely noisy scans.
-    - Spread cap: all tokens must sit within a compact region of the page.
-      A small label or page number occupies a narrow band; random marks do not.
+    Two separate rules cover the two cases we care about:
+
+    Label rule (original):
+      A spatially compact cluster of up to 20 confident tokens indicates a
+      small annotation like a page number or a brief label.
+
+    Full-page rule (new):
+      A real document page produces many confident tokens spread across a
+      substantial portion of the image.  Where the structural pass fails
+      (e.g. thin text on a sparse page) this rule catches the document.
     """
     try:
         data = pytesseract.image_to_data(
@@ -108,6 +121,7 @@ def _has_readable_text(image: np.ndarray) -> bool:
         ys_top: list[int] = []
         xs_right: list[int] = []
         ys_bottom: list[int] = []
+        confs: list[int] = []
 
         for conf, text, x, y, w, h in zip(
             data["conf"],
@@ -123,11 +137,12 @@ def _has_readable_text(image: np.ndarray) -> bool:
                     ys_top.append(int(y))
                     xs_right.append(int(x) + int(w))
                     ys_bottom.append(int(y) + int(h))
+                    confs.append(int(conf))
             except (ValueError, TypeError):
                 pass
 
         count = len(xs_left)
-        if count == 0 or count > _OCR_MAX_TOKENS:
+        if count == 0:
             return False
 
         spread = (
@@ -135,7 +150,21 @@ def _has_readable_text(image: np.ndarray) -> bool:
             * (max(ys_bottom) - min(ys_top))
             / page_area
         )
-        return spread <= _OCR_MAX_SPREAD
+
+        # Label rule: small compact cluster.
+        if count <= _OCR_MAX_TOKENS_LABEL and spread <= _OCR_MAX_SPREAD_LABEL:
+            return True
+
+        # Full-page rule: many confident tokens spread across the page.
+        avg_conf = sum(confs) / len(confs)
+        if (
+            count >= _OCR_MIN_TOKENS_PAGE
+            and spread >= _OCR_MIN_SPREAD_PAGE
+            and avg_conf >= _OCR_MIN_AVG_CONF_PAGE
+        ):
+            return True
+
+        return False
 
     except Exception:  # noqa: BLE001
         return False
@@ -165,8 +194,16 @@ def detect_blankness(image_bytes: bytes) -> BlanknessResult:
     strong_mask = blurred < strong_threshold
     weak_mask = blurred < weak_threshold
 
+    # Merge fragmented letter strokes into word-level blobs before measuring
+    # connected components.  A 3×3 closing pass is enough to join the gaps
+    # that thin or anti-aliased text creates, without distorting coarse shapes.
+    _morph_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    merged_mask = cv2.morphologyEx(
+        strong_mask.astype(np.uint8), cv2.MORPH_CLOSE, _morph_kernel
+    ).astype(bool)
+
     component_count, large_component_count, largest_component_ratio = (
-        _connected_component_stats(strong_mask)
+        _connected_component_stats(merged_mask)
     )
 
     strong_ink_ratio = float(np.mean(strong_mask))

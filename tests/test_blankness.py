@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2  # type: ignore
 import numpy as np
+import pytest
 
 from app.services.blankness import detect_blankness
+
+_BLANKNESS_SAMPLES = Path(__file__).parent.parent / "samples" / "blankness"
 
 
 def _encode_png(image: np.ndarray) -> bytes:
@@ -104,3 +109,33 @@ def test_detect_blankness_small_label_page() -> None:
     result = detect_blankness(_encode_png(_small_label_page()))
 
     assert result.classification == "content"
+
+
+@pytest.mark.skipif(
+    not (_BLANKNESS_SAMPLES / "blank_false.png").exists(),
+    reason="samples/blankness/blank_false.png not present",
+)
+def test_detect_blankness_real_content_page() -> None:
+    """A real sparse-but-readable document page must not be classified as blank."""
+    data = (_BLANKNESS_SAMPLES / "blank_false.png").read_bytes()
+    result = detect_blankness(data)
+    assert result.classification == "content", (
+        f"Expected content but got blank (score={result.confidence:.3f}, "
+        f"large_components={result.metrics.large_component_count}, "
+        f"std={result.metrics.intensity_std:.2f})"
+    )
+
+
+@pytest.mark.skipif(
+    not (_BLANKNESS_SAMPLES / "blank_true.png").exists(),
+    reason="samples/blankness/blank_true.png not present",
+)
+def test_detect_blankness_real_blank_page() -> None:
+    """The problematic original file (not a screenshot) must also be classified as content."""
+    data = (_BLANKNESS_SAMPLES / "blank_true.png").read_bytes()
+    result = detect_blankness(data)
+    assert result.classification == "content", (
+        f"Expected content but got blank (score={result.confidence:.3f}, "
+        f"large_components={result.metrics.large_component_count}, "
+        f"std={result.metrics.intensity_std:.2f})"
+    )
