@@ -1,9 +1,12 @@
 # page-orientation-api
 
-REST API (FastAPI) to classify **PNG pages** as `blank` or `content`, and detect
-page orientation with **Tesseract OSD** (`--psm 0`) only for content pages.
-Returns one of: `upright`, `rotated_left`, `rotated_right`, `upside_down` when
-orientation runs. No image is rotated in the response.
+REST API (FastAPI) with two independent endpoints for PNG page analysis:
+
+- **`/blankness`** — classify a page as `blank` or `content`
+- **`/orientation`** — detect page rotation with **Tesseract OSD** (`--psm 0`);
+  returns one of: `upright`, `rotated_left`, `rotated_right`, `upside_down`
+
+No image is rotated in the response.
 
 ## Stack (all free / open-source)
 
@@ -22,12 +25,13 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 5000
 ```
 
-- `GET /healthz` — health
-- `POST /detect` — `multipart/form-data` field `file` (PNG), or raw bytes body
-- Response includes `blank` (`true` or `false`), `blankness_score`, and
-  `orientation_confidence` when orientation runs
-- Optional: `?debug=1` adds `blankness_debug`, plus `rotate_degrees` and `raw_osd`
-  when orientation runs
+- `GET /healthz` — health check
+- `POST /blankness` — `multipart/form-data` field `file` (PNG), or raw bytes body
+  - Response: `blank` (`true`/`false`), `blankness_score`
+  - Optional `?debug=1` adds `blankness_debug`
+- `POST /orientation` — `multipart/form-data` field `file` (PNG), or raw bytes body
+  - Response: `orientation`, `orientation_confidence`
+  - Optional `?debug=1` adds `orientation_method`, `rotate_degrees`, and `raw_osd`
 
 ## Tests
 

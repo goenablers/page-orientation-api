@@ -1,4 +1,4 @@
-"""REST API for page orientation detection."""
+"""REST API for page blankness and orientation detection."""
 
 from __future__ import annotations
 
@@ -18,11 +18,7 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/detect")
-async def detect(
-    request: Request,
-    file: Optional[UploadFile] = File(default=None),
-) -> dict:
+async def _read_image(request: Request, file: Optional[UploadFile]) -> bytes:
     if file is not None:
         image_bytes = await file.read()
     else:
@@ -32,43 +28,57 @@ async def detect(
             status_code=400,
             detail="No image provided. Use multipart form field 'file' or raw PNG body.",
         )
+    return image_bytes
 
-    debug = request.query_params.get("debug", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "y",
-    )
 
-    def _run_detection() -> tuple[BlanknessResult, Optional[OrientationResult]]:
-        blankness = detect_blankness(image_bytes)
-        if blankness.classification != "content":
-            return blankness, None
-        orientation = detect_orientation(image_bytes, include_debug=debug)
-        return blankness, orientation
+def _is_debug(request: Request) -> bool:
+    return request.query_params.get("debug", "").lower() in ("1", "true", "yes", "y")
+
+
+@router.post("/blankness")
+async def blankness(
+    request: Request,
+    file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    image_bytes = await _read_image(request, file)
+    debug = _is_debug(request)
 
     try:
-        blankness_result, orientation_result = await run_in_threadpool(_run_detection)
+        result: BlanknessResult = await run_in_threadpool(detect_blankness, image_bytes)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     out: dict = {
-        "blank": blankness_result.classification == "blank",
-        "blankness_score": blankness_result.confidence,
-        "orientation": (
-            orientation_result.orientation if orientation_result is not None else None
-        ),
-        "orientation_confidence": (
-            orientation_result.confidence if orientation_result is not None else None
-        ),
-        "orientation_method": (
-            orientation_result.method if orientation_result is not None else None
-        ),
+        "blank": result.classification == "blank",
+        "blankness_score": result.confidence,
     }
     if debug:
-        out["blankness_debug"] = blankness_result.debug_payload()
-        if orientation_result is not None:
-            out["rotate_degrees"] = orientation_result.rotate_degrees
-            if orientation_result.raw_osd is not None:
-                out["raw_osd"] = orientation_result.raw_osd
+        out["blankness_debug"] = result.debug_payload()
+    return out
+
+
+@router.post("/orientation")
+async def orientation(
+    request: Request,
+    file: Optional[UploadFile] = File(default=None),
+) -> dict:
+    image_bytes = await _read_image(request, file)
+    debug = _is_debug(request)
+
+    try:
+        result: OrientationResult = await run_in_threadpool(
+            detect_orientation, image_bytes, include_debug=debug
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    out: dict = {
+        "orientation": result.orientation,
+        "orientation_confidence": result.confidence,
+    }
+    if debug:
+        out["orientation_method"] = result.method
+        out["rotate_degrees"] = result.rotate_degrees
+        if result.raw_osd is not None:
+            out["raw_osd"] = result.raw_osd
     return out
