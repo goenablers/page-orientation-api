@@ -127,6 +127,21 @@ def test_detect_blankness_real_content_page() -> None:
 
 
 @pytest.mark.skipif(
+    not (_BLANKNESS_SAMPLES / "jutL8IEU-1.png").exists(),
+    reason="samples/blankness/jutL8IEU-1.png not present",
+)
+def test_detect_blankness_sparse_cover_page() -> None:
+    """Sparse cover page with header, title, and footer must not be classified as blank."""
+    data = (_BLANKNESS_SAMPLES / "jutL8IEU-1.png").read_bytes()
+    result = detect_blankness(data)
+    assert result.classification == "content", (
+        f"Expected content but got blank (score={result.confidence:.3f}, "
+        f"large_components={result.metrics.large_component_count}, "
+        f"std={result.metrics.intensity_std:.2f})"
+    )
+
+
+@pytest.mark.skipif(
     not (_BLANKNESS_SAMPLES / "blank_true.png").exists(),
     reason="samples/blankness/blank_true.png not present",
 )

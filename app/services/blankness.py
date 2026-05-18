@@ -82,105 +82,47 @@ def _connected_component_stats(mask: np.ndarray) -> tuple[int, int, float]:
 
 
 _OCR_MIN_CONF = 50
-# Small-label path: a compact cluster of up to this many tokens is accepted
-# as a label/page-number annotation.
-_OCR_MAX_TOKENS_LABEL = 20
-_OCR_MAX_SPREAD_LABEL = 0.25  # max bounding-box fraction for a label
-# Full-page path: a real document page will have many confident tokens that
-# together cover a meaningful fraction of the page.
-_OCR_MIN_TOKENS_PAGE = 30
-_OCR_MIN_SPREAD_PAGE = 0.10  # token bounding box must span at least 10 % of page
-_OCR_MIN_AVG_CONF_PAGE = 70  # require genuinely confident text, not OCR noise
 
 
 def _has_readable_text(image: np.ndarray) -> bool:
-    """
-    Return True when OCR finds readable alphanumeric content.
-
-    Two separate rules cover the two cases we care about:
-
-    Label rule (original):
-      A spatially compact cluster of up to 20 confident tokens indicates a
-      small annotation like a page number or a brief label.
-
-    Full-page rule (new):
-      A real document page produces many confident tokens spread across a
-      substantial portion of the image.  Where the structural pass fails
-      (e.g. thin text on a sparse page) this rule catches the document.
-    """
+    """Return True when OCR finds any confident alphanumeric token."""
     try:
         data = pytesseract.image_to_data(
             image,
             config="--psm 11",
             output_type=pytesseract.Output.DICT,
         )
-        h_img, w_img = image.shape[:2]
-        page_area = float(max(h_img * w_img, 1))
-
-        xs_left: list[int] = []
-        ys_top: list[int] = []
-        xs_right: list[int] = []
-        ys_bottom: list[int] = []
-        confs: list[int] = []
-
-        for conf, text, x, y, w, h in zip(
-            data["conf"],
-            data["text"],
-            data["left"],
-            data["top"],
-            data["width"],
-            data["height"],
-        ):
+        for conf, text in zip(data["conf"], data["text"]):
             try:
                 if int(conf) >= _OCR_MIN_CONF and re.search(r"[A-Za-z0-9]", text):
-                    xs_left.append(int(x))
-                    ys_top.append(int(y))
-                    xs_right.append(int(x) + int(w))
-                    ys_bottom.append(int(y) + int(h))
-                    confs.append(int(conf))
+                    return True
             except (ValueError, TypeError):
                 pass
-
-        count = len(xs_left)
-        if count == 0:
-            return False
-
-        spread = (
-            (max(xs_right) - min(xs_left))
-            * (max(ys_bottom) - min(ys_top))
-            / page_area
-        )
-
-        # Label rule: small compact cluster.
-        if count <= _OCR_MAX_TOKENS_LABEL and spread <= _OCR_MAX_SPREAD_LABEL:
-            return True
-
-        # Full-page rule: many confident tokens spread across the page.
-        avg_conf = sum(confs) / len(confs)
-        if (
-            count >= _OCR_MIN_TOKENS_PAGE
-            and spread >= _OCR_MIN_SPREAD_PAGE
-            and avg_conf >= _OCR_MIN_AVG_CONF_PAGE
-        ):
-            return True
-
         return False
-
     except Exception:  # noqa: BLE001
         return False
+
+
+def _content_confidence(
+    metrics: BlanknessMetrics,
+) -> float:
+    return min(
+        0.99,
+        0.55
+        + min(0.20, metrics.largest_component_ratio * 2.5)
+        + min(0.15, metrics.large_component_count / 300.0)
+        + min(0.10, metrics.intensity_std / 600.0),
+    )
 
 
 def detect_blankness(image_bytes: bytes) -> BlanknessResult:
     """
     Classify a page as blank or content.
 
-    The decision is based on structural signals rather than raw ink coverage.
-    Scattered marks, smudges, faint stamps, or unreadable stray writing produce
-    many small components but no large grouped regions; those pages are blank.
-    Real content pages have substantial component area and high pixel variance.
-
-    Key thresholds are intentionally conservative and easy to adjust against
-    a labeled sample set.
+    OCR runs first: any confident alphanumeric token means the page is content.
+    Otherwise the decision uses structural signals (not raw ink coverage).
+    Scattered marks with no readable text produce small disconnected components
+    and are classified as blank.
     """
 
     image = _decode_grayscale(image_bytes)
@@ -225,42 +167,25 @@ def detect_blankness(image_bytes: bytes) -> BlanknessResult:
         intensity_std=intensity_std,
     )
 
-    # A page counts as content only when it shows real structural density:
-    # grouped regions large enough to be letters/words, and overall pixel
-    # variance consistent with a page of text or a form.
+    # OCR takes priority: any readable text means the page is not blank.
+    if _has_readable_text(cropped):
+        return BlanknessResult("content", _content_confidence(metrics), metrics)
+
+    # Otherwise decide from structural signals: grouped regions large enough to
+    # be letters/words, and overall pixel variance consistent with text or a form.
     has_substantial_structure = (
         largest_component_ratio >= 0.010
         or large_component_count >= 40
         or intensity_std >= 30.0
     )
 
-    if not has_substantial_structure:
-        # OCR fallback: a page can look structurally blank but still carry a
-        # small label, page number, or brief annotation. If readable
-        # alphanumeric text is found, treat the page as content.
-        if _has_readable_text(cropped):
-            confidence = min(
-                0.99,
-                0.55
-                + min(0.20, largest_component_ratio * 2.5)
-                + min(0.15, large_component_count / 300.0)
-                + min(0.10, intensity_std / 600.0),
-            )
-            return BlanknessResult("content", confidence, metrics)
-
-        confidence = min(
-            0.99,
-            0.70
-            + max(0.0, (0.010 - largest_component_ratio) * 2.0)
-            + max(0.0, (30.0 - intensity_std) / 60.0),
-        )
-        return BlanknessResult("blank", confidence, metrics)
+    if has_substantial_structure:
+        return BlanknessResult("content", _content_confidence(metrics), metrics)
 
     confidence = min(
         0.99,
-        0.55
-        + min(0.20, largest_component_ratio * 2.5)
-        + min(0.15, large_component_count / 300.0)
-        + min(0.10, intensity_std / 600.0),
+        0.70
+        + max(0.0, (0.010 - largest_component_ratio) * 2.0)
+        + max(0.0, (30.0 - intensity_std) / 60.0),
     )
-    return BlanknessResult("content", confidence, metrics)
+    return BlanknessResult("blank", confidence, metrics)
