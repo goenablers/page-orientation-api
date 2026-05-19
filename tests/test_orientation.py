@@ -24,6 +24,12 @@ _EXPECTED = {
 # Samples bundled with the repo, relative to the project root.
 _REPO_SAMPLES: dict[str, str] = {
     "559637c1-cf2a-4bc3-bdb9-fdd06e56a1a4.png": "rotated_left",
+    # wrong.png stores pixels upside-down with EXIF Orientation=3; printsrc is a
+    # screenshot of the same page (upright pixels, no EXIF). Both should read upright.
+    "printsrc.png": "upright",
+    "wrong.png": "upright",
+    # EXIF Orientation=8; OSD hints 90° but OCR confirms 270° (rotated_right).
+    "wrong_exif8.png": "rotated_right",
 }
 
 _REPO_SAMPLES_DIR = Path(__file__).parent.parent / "samples" / "rotation"
@@ -65,15 +71,35 @@ def test_mapping_covers_tesseract_rotations() -> None:
 def test_preprocessed_path_keeps_raw_osd_confidence(monkeypatch) -> None:
     calls = [
         (270, 1.25, "raw-osd"),
-        (90, 4.75, "preprocessed-osd"),
+        (180, 4.75, "preprocessed-osd"),
     ]
     monkeypatch.setattr(orientation, "_run_osd", lambda _image: calls.pop(0))
 
     result = detect_orientation(_png_bytes())
 
     assert result.method == "osd_preprocessed"
-    assert result.orientation == "rotated_left"
+    assert result.orientation == "upside_down"
     assert result.confidence == 1.25
+
+
+def test_lateral_osd_hint_verified_by_ocr_2way(monkeypatch) -> None:
+    # Confident 90° OSD must not short-circuit; 2-way OCR picks 270°.
+    calls = [
+        (90, 7.0, "raw-osd"),
+        (90, 5.0, "preprocessed-osd"),
+    ]
+    monkeypatch.setattr(orientation, "_run_osd", lambda _image: calls.pop(0))
+    monkeypatch.setattr(
+        orientation,
+        "_ocr_run",
+        lambda *candidates, image: _OcrResult(rotate_degrees=270, margin=0.6),
+    )
+
+    result = detect_orientation(_png_bytes())
+
+    assert result.method == "ocr_2way"
+    assert result.orientation == "rotated_right"
+    assert result.rotate_degrees == 270
 
 
 def test_ocr_2way_stops_when_margin_is_strong(monkeypatch) -> None:

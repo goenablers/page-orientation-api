@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
 
 import cv2  # type: ignore
 import numpy as np
 import pytesseract  # type: ignore
+from PIL import Image, ImageOps
 
 # Maps Tesseract "Rotate" (clockwise deg to make image upright) to API labels.
 ORIENTATION_MAP: dict[int, str] = {
@@ -41,6 +43,9 @@ ORIENTATION_MAP: dict[int, str] = {
 _OSD_ACCEPT = 6.0
 _OSD_PRE_ACCEPT = 4.0
 _OCR_2WAY_MARGIN = 0.5
+
+# 90°/270° are left-vs-right ambiguous; never trust OSD alone on this axis.
+_OSD_LATERAL = frozenset((90, 270))
 
 # Candidate pairs for the 2-way OCR stage, keyed by the OSD-hinted Rotate value.
 _AMBIGUOUS_PAIRS: dict[int, tuple[int, int]] = {
@@ -216,16 +221,27 @@ def _ocr_run(*candidates: int, image: np.ndarray) -> _OcrResult:
     return _OcrResult(rotate_degrees=best, margin=round(margin, 4))
 
 
+def _decode_grayscale(image_bytes: bytes) -> np.ndarray:
+    """Decode PNG bytes to grayscale, applying EXIF orientation if present."""
+    with Image.open(BytesIO(image_bytes)) as im:
+        im = ImageOps.exif_transpose(im)
+        gray = im.convert("L")
+    image = np.asarray(gray)
+    if image.ndim != 2 or image.size == 0:
+        raise ValueError("Failed to decode image")
+    return image
+
+
 def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> OrientationResult:
     """
     Progressive cascade — each stage evaluates its own confidence and decides
     whether to stop or hand off to the next stage.
 
     Stage 1 — raw OSD
-      Stop if raw OSD confidence >= 6.0.
+      Stop if raw OSD confidence >= 6.0 (except 90°/270° hints — always verify).
 
     Stage 2 — preprocessed OSD  (binarised + margin-cropped)
-      Stop if preprocessed OSD confidence >= 4.0.
+      Stop if preprocessed OSD confidence >= 4.0 (same 90°/270° exception).
 
     Stage 3 — 2-way OCR
       Use the axis family hinted by the best OSD pass so far.
@@ -240,15 +256,12 @@ def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> Or
     Maximum Tesseract calls: 1 OSD + 1 OSD + 2 OCR + 4 OCR = 8.
     No loops; no retries beyond this fixed cascade.
     """
-    arr = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        raise ValueError("Failed to decode image")
+    image = _decode_grayscale(image_bytes)
 
     # ── Stage 1: raw OSD ────────────────────────────────────────────────────
     rotate, raw_confidence, raw_osd = _run_osd(image)
 
-    if raw_confidence >= _OSD_ACCEPT:
+    if raw_confidence >= _OSD_ACCEPT and rotate not in _OSD_LATERAL:
         return OrientationResult(
             orientation=ORIENTATION_MAP.get(rotate, "upright"),
             confidence=raw_confidence,
@@ -261,7 +274,7 @@ def detect_orientation(image_bytes: bytes, *, include_debug: bool = False) -> Or
     preprocessed = _preprocess_for_osd(image)
     rotate2, confidence2, raw_osd2 = _run_osd(preprocessed)
 
-    if confidence2 >= _OSD_PRE_ACCEPT:
+    if confidence2 >= _OSD_PRE_ACCEPT and rotate2 not in _OSD_LATERAL:
         return OrientationResult(
             orientation=ORIENTATION_MAP.get(rotate2, "upright"),
             confidence=raw_confidence,
