@@ -35,13 +35,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 5000
 
 ## Tests
 
-With sample PNGs (optional: `export SAMPLES_DIR=/path/to/samples`):
+Sample PNGs live in `samples/blankness/` and `samples/rotation/`. Unit tests use synthetic images; integration tests use those folders when present.
 
 ```bash
 pytest tests/ -q
 ```
-
-If `SAMPLES_DIR` and the default macOS path are both missing, integration cases are skipped; unit test on the orientation map still runs.
 
 ## Git branches → Fly.io
 

@@ -1,10 +1,8 @@
-"""OSD service tests. Requires Tesseract on PATH and (optional) sample images."""
+"""OSD service tests. Requires Tesseract on PATH and sample images in samples/rotation."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional
 
 import cv2  # type: ignore
 import numpy as np
@@ -13,37 +11,30 @@ import pytest
 from app.services import orientation
 from app.services.orientation import ORIENTATION_MAP, _OcrResult, detect_orientation
 
-_EXPECTED = {
-    "SCR-20260427-rspu.png": "upside_down",
-    "SCR-20260427-rvlq TLC.png": "rotated_left",
-    "SCR-20260427-rvlq.png": "rotated_left",
-    "SCR-20260427-rvst.png": "upright",
-    "SCR-20260427-rwad.png": "rotated_right",
+_ROTATION_SAMPLES_DIR = Path(__file__).parent.parent / "samples" / "rotation"
+
+# Filename prefixes (UR, RL, RR, UD) encode the expected orientation.
+_PREFIX_EXPECTED = {
+    "UR": "upright",
+    "RL": "rotated_left",
+    "RR": "rotated_right",
+    "UD": "upside_down",
 }
 
-# Samples bundled with the repo, relative to the project root.
-_REPO_SAMPLES: dict[str, str] = {
-    "559637c1-cf2a-4bc3-bdb9-fdd06e56a1a4.png": "rotated_left",
-    # wrong.png stores pixels upside-down with EXIF Orientation=3; printsrc is a
-    # screenshot of the same page (upright pixels, no EXIF). Both should read upright.
+# Pages that do not follow the prefix convention.
+_SPECIAL_EXPECTED = {
     "printsrc.png": "upright",
     "wrong.png": "upright",
-    # EXIF Orientation=8; OSD hints 90° but OCR confirms 270° (rotated_right).
     "wrong_exif8.png": "rotated_right",
 }
-
-_REPO_SAMPLES_DIR = Path(__file__).parent.parent / "samples" / "rotation"
 
 _VALID_METHODS = frozenset(("osd", "osd_preprocessed", "ocr_2way", "ocr_4way"))
 
 
-def _samples_dir() -> Optional[Path]:
-    env = os.getenv("SAMPLES_DIR", "").strip()
-    if env:
-        p = Path(env).expanduser()
-        return p if p.is_dir() else None
-    default = Path("/Users/conradosk/Desktop/Tesseract OCR 2/samples")
-    return default if default.is_dir() else None
+def _expected_orientation(filename: str) -> str | None:
+    if filename in _SPECIAL_EXPECTED:
+        return _SPECIAL_EXPECTED[filename]
+    return _PREFIX_EXPECTED.get(filename[:2].upper())
 
 
 def _assert_contract(result) -> None:
@@ -132,10 +123,7 @@ def test_ocr_4way_used_when_2way_margin_is_weak(monkeypatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(orientation, "_run_osd", lambda _image: calls.pop(0))
 
-    ocr_calls: list[tuple[int, ...]] = []
-
     def _fake_ocr(*candidates: int, image: np.ndarray) -> _OcrResult:
-        ocr_calls.append(candidates)
         # First call (2-way): weak margin; second call (4-way): winner returned.
         if len(candidates) == 2:
             return _OcrResult(rotate_degrees=candidates[0], margin=0.1)
@@ -153,38 +141,20 @@ def test_ocr_4way_used_when_2way_margin_is_weak(monkeypatch) -> None:
 
 
 @pytest.mark.skipif(
-    _samples_dir() is None,
-    reason="SAMPLES_DIR not set or default samples path missing; skipping integration tests",
-)
-def test_detect_matches_expected_against_samples() -> None:
-    root = _samples_dir()
-    assert root is not None
-    for path in sorted(root.glob("*.png")):
-        name = path.name
-        expected = _EXPECTED.get(name)
-        if expected is None:
-            continue
-        data = path.read_bytes()
-        result = detect_orientation(data)
-        assert result.orientation == expected, (
-            f"{name}: got {result.orientation!r} expected {expected!r}"
-        )
-        _assert_contract(result)
-
-
-@pytest.mark.skipif(
-    not _REPO_SAMPLES_DIR.is_dir(),
+    not _ROTATION_SAMPLES_DIR.is_dir(),
     reason="samples/rotation directory not present",
 )
-def test_detect_repo_rotation_samples() -> None:
+def test_detect_rotation_samples() -> None:
     """Integration test against samples bundled in the repo."""
-    for name, expected in _REPO_SAMPLES.items():
-        path = _REPO_SAMPLES_DIR / name
-        if not path.exists():
-            pytest.skip(f"sample file missing: {path}")
-        data = path.read_bytes()
-        result = detect_orientation(data)
+    tested = 0
+    for path in sorted(_ROTATION_SAMPLES_DIR.glob("*.png")):
+        expected = _expected_orientation(path.name)
+        if expected is None:
+            continue
+        result = detect_orientation(path.read_bytes())
         assert result.orientation == expected, (
-            f"{name}: got {result.orientation!r} expected {expected!r}"
+            f"{path.name}: got {result.orientation!r} expected {expected!r}"
         )
         _assert_contract(result)
+        tested += 1
+    assert tested > 0, "no labeled rotation samples found in samples/rotation"

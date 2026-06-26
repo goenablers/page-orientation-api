@@ -10,7 +10,19 @@ import pytest
 
 from app.services.blankness import detect_blankness
 
-_BLANKNESS_SAMPLES = Path(__file__).parent.parent / "samples" / "blankness"
+_BLANKNESS_SAMPLES_DIR = Path(__file__).parent.parent / "samples" / "blankness"
+
+# Labeled samples in samples/blankness. Filenames with "yes"/"no" indicate blankness.
+_BLANKNESS_EXPECTED = {
+    "blankness1 no.png": "content",
+    "blankness2 no.png": "content",
+    "blankness3 yes.png": "blank",
+    "blank_false.png": "content",
+    "blank_true.png": "content",
+    "jutL8IEU-1.png": "content",
+    "pg 1.png": "content",
+    "random letters.png": "content",
+}
 
 
 def _encode_png(image: np.ndarray) -> bytes:
@@ -112,45 +124,22 @@ def test_detect_blankness_small_label_page() -> None:
 
 
 @pytest.mark.skipif(
-    not (_BLANKNESS_SAMPLES / "blank_false.png").exists(),
-    reason="samples/blankness/blank_false.png not present",
+    not _BLANKNESS_SAMPLES_DIR.is_dir(),
+    reason="samples/blankness directory not present",
 )
-def test_detect_blankness_real_content_page() -> None:
-    """A real sparse-but-readable document page must not be classified as blank."""
-    data = (_BLANKNESS_SAMPLES / "blank_false.png").read_bytes()
-    result = detect_blankness(data)
-    assert result.classification == "content", (
-        f"Expected content but got blank (score={result.confidence:.3f}, "
-        f"large_components={result.metrics.large_component_count}, "
-        f"std={result.metrics.intensity_std:.2f})"
-    )
-
-
-@pytest.mark.skipif(
-    not (_BLANKNESS_SAMPLES / "jutL8IEU-1.png").exists(),
-    reason="samples/blankness/jutL8IEU-1.png not present",
-)
-def test_detect_blankness_sparse_cover_page() -> None:
-    """Sparse cover page with header, title, and footer must not be classified as blank."""
-    data = (_BLANKNESS_SAMPLES / "jutL8IEU-1.png").read_bytes()
-    result = detect_blankness(data)
-    assert result.classification == "content", (
-        f"Expected content but got blank (score={result.confidence:.3f}, "
-        f"large_components={result.metrics.large_component_count}, "
-        f"std={result.metrics.intensity_std:.2f})"
-    )
-
-
-@pytest.mark.skipif(
-    not (_BLANKNESS_SAMPLES / "blank_true.png").exists(),
-    reason="samples/blankness/blank_true.png not present",
-)
-def test_detect_blankness_real_blank_page() -> None:
-    """The problematic original file (not a screenshot) must also be classified as content."""
-    data = (_BLANKNESS_SAMPLES / "blank_true.png").read_bytes()
-    result = detect_blankness(data)
-    assert result.classification == "content", (
-        f"Expected content but got blank (score={result.confidence:.3f}, "
-        f"large_components={result.metrics.large_component_count}, "
-        f"std={result.metrics.intensity_std:.2f})"
-    )
+def test_detect_blankness_samples() -> None:
+    """Integration test against labeled samples bundled in the repo."""
+    tested = 0
+    for name, expected in _BLANKNESS_EXPECTED.items():
+        path = _BLANKNESS_SAMPLES_DIR / name
+        if not path.exists():
+            pytest.skip(f"sample file missing: {path}")
+        result = detect_blankness(path.read_bytes())
+        assert result.classification == expected, (
+            f"{name}: got {result.classification!r} expected {expected!r} "
+            f"(score={result.confidence:.3f}, "
+            f"large_components={result.metrics.large_component_count}, "
+            f"std={result.metrics.intensity_std:.2f})"
+        )
+        tested += 1
+    assert tested == len(_BLANKNESS_EXPECTED)
