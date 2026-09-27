@@ -60,7 +60,9 @@ fly tokens create deploy -a page-orientation-api-prd
 # Add the tokens to GitHub repo secrets (see table above)
 ```
 
-**Staging** is available at: `https://page-orientation-api-stg.fly.dev` after deploy.
+The service has no public Fly service. AutoTranslator apps call it over Fly's
+private network at `http://page-orientation-api-stg.internal:8080` (STG) or
+`http://page-orientation-api-prd.internal:8080` (Production).
 
 Pushing the repo to **GitHub** and configuring secrets is described in [docs/SETUP_GITHUB_AND_PROD.md](docs/SETUP_GITHUB_AND_PROD.md) (if `gh` is not installed on your machine, use a manual `git remote` as documented there).
 

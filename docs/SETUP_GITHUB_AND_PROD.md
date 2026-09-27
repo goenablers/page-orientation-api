@@ -50,6 +50,7 @@ fly deploy -c fly.production.toml --remote-only
 
 ## 4) Staging URL (already deployed in this project)
 
-- **STG:** `https://page-orientation-api-stg.fly.dev`
+- **STG (private 6PN):** `http://page-orientation-api-stg.internal:8080`
 
-When PROD is created, it will be: `https://page-orientation-api-prd.fly.dev`
+When PROD is created, its private 6PN endpoint will be:
+`http://page-orientation-api-prd.internal:8080`.
